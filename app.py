@@ -1,36 +1,55 @@
 from flask import Flask, request, jsonify, session, render_template, Response
 from werkzeug.security import generate_password_hash, check_password_hash
-import sqlite3
+import psycopg2
+import psycopg2.extras
 import qrcode
 import io
 import base64
 import random
 import os
+import csv
 from datetime import datetime, timezone, timedelta
 
 app = Flask(__name__)
 app.secret_key = 'omnipay_secure_development_key'
 
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-DB_NAME = os.path.join(BASE_DIR, 'omnipay.db')
+# Automatically pull the Neon URL from Render Environment Variables
+DATABASE_URL = os.environ.get('DATABASE_URL')
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
 def get_ist_time():
     return datetime.now(IST).strftime('%d %b %Y, %I:%M %p')
 
+# Wrapper to make psycopg2 work exactly like sqlite3
+class DBWrapper:
+    def __init__(self):
+        self.conn = psycopg2.connect(DATABASE_URL)
+        self.cursor = self.conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    def execute(self, query, params=()):
+        self.cursor.execute(query, params)
+        return self
+    def fetchone(self): return self.cursor.fetchone()
+    def fetchall(self): return self.cursor.fetchall()
+    def commit(self): self.conn.commit()
+    def rollback(self): self.conn.rollback()
+    def close(self):
+        self.cursor.close()
+        self.conn.close()
+
 def get_db():
-    conn = sqlite3.connect(DB_NAME, timeout=30)
-    conn.row_factory = sqlite3.Row
-    conn.execute('PRAGMA journal_mode=WAL;')
-    return conn
+    return DBWrapper()
 
 def init_db():
+    if not DATABASE_URL:
+        print("WARNING: DATABASE_URL is not set!")
+        return
+        
     conn = get_db()
     try:
         conn.execute('''
             CREATE TABLE IF NOT EXISTS users (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 name TEXT,
                 phone TEXT UNIQUE,
                 upi_id TEXT UNIQUE,
@@ -40,7 +59,7 @@ def init_db():
         ''')
         conn.execute('''
             CREATE TABLE IF NOT EXISTS bank_accounts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 user_id INTEGER,
                 bank_name TEXT,
                 last_four TEXT,
@@ -49,7 +68,7 @@ def init_db():
         ''')
         conn.execute('''
             CREATE TABLE IF NOT EXISTS transactions (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 user_id INTEGER,
                 utr TEXT UNIQUE,
                 title TEXT,
@@ -57,30 +76,31 @@ def init_db():
                 amount REAL,
                 type TEXT DEFAULT 'DEBIT',
                 source_account TEXT DEFAULT 'Omni Bank Account',
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         try:
-            conn.execute('ALTER TABLE transactions ADD COLUMN source_account TEXT DEFAULT "Omni Bank Account"')
-        except sqlite3.OperationalError:
-            pass
+            conn.execute('ALTER TABLE transactions ADD COLUMN source_account TEXT DEFAULT \'Omni Bank Account\'')
+        except psycopg2.errors.DuplicateColumn:
+            conn.rollback() # Safely ignore if column exists
             
         conn.execute('''
             CREATE TABLE IF NOT EXISTS payment_requests (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                id SERIAL PRIMARY KEY,
                 requester_id INTEGER,
                 requester_name TEXT,
                 payer_phone TEXT,
                 amount REAL,
                 note TEXT,
                 status TEXT DEFAULT 'PENDING',
-                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         conn.commit()
     finally:
         conn.close()
 
+# Only initialize DB if running natively, else Render triggers it
 init_db()
 
 @app.route('/')
@@ -105,10 +125,10 @@ def register():
     
     conn = get_db()
     try:
-        conn.execute("INSERT INTO users (name, phone, upi_id, pin_hash) VALUES (?, ?, ?, ?)", (name, phone, upi_id, pin_hash))
+        conn.execute("INSERT INTO users (name, phone, upi_id, pin_hash) VALUES (%s, %s, %s, %s)", (name, phone, upi_id, pin_hash))
         conn.commit()
         return jsonify({'success': 'Account created successfully! Please login.'})
-    except sqlite3.IntegrityError:
+    except psycopg2.IntegrityError:
         return jsonify({'error': 'Phone number is already registered.'}), 400
     finally:
         conn.close()
@@ -124,7 +144,7 @@ def login():
             
     conn = get_db()
     try:
-        user = conn.execute("SELECT * FROM users WHERE phone = ?", (phone,)).fetchone()
+        user = conn.execute("SELECT * FROM users WHERE phone = %s", (phone,)).fetchone()
         
         if user and check_password_hash(user['pin_hash'], pin):
             session['user_id'] = user['id']
@@ -145,15 +165,15 @@ def user_data():
         
     conn = get_db()
     try:
-        user = conn.execute("SELECT name, phone, upi_id, balance FROM users WHERE id = ?", (session['user_id'],)).fetchone()
+        user = conn.execute("SELECT name, phone, upi_id, balance FROM users WHERE id = %s", (session['user_id'],)).fetchone()
         
         if user is None:
             session.pop('user_id', None)
             return jsonify({'error': 'User not found, please login again'}), 401
             
-        banks = conn.execute("SELECT id, bank_name, last_four, balance FROM bank_accounts WHERE user_id = ?", (session['user_id'],)).fetchall()
-        txs = conn.execute("SELECT id, utr, title, category, amount, type, source_account, timestamp FROM transactions WHERE user_id = ? ORDER BY id DESC LIMIT 50", (session['user_id'],)).fetchall()
-        total_cb = conn.execute("SELECT SUM(amount) FROM transactions WHERE user_id = ? AND category = 'Rewards'", (session['user_id'],)).fetchone()[0] or 0.0
+        banks = conn.execute("SELECT id, bank_name, last_four, balance FROM bank_accounts WHERE user_id = %s", (session['user_id'],)).fetchall()
+        txs = conn.execute("SELECT id, utr, title, category, amount, type, source_account, timestamp FROM transactions WHERE user_id = %s ORDER BY id DESC LIMIT 50", (session['user_id'],)).fetchall()
+        total_cb = conn.execute("SELECT SUM(amount) FROM transactions WHERE user_id = %s AND category = 'Rewards'", (session['user_id'],)).fetchone()['sum'] or 0.0
         
         return jsonify({
             'user': dict(user),
@@ -177,13 +197,13 @@ def add_bank():
 
     conn = get_db()
     try:
-        user = conn.execute("SELECT pin_hash FROM users WHERE id = ?", (session['user_id'],)).fetchone()
+        user = conn.execute("SELECT pin_hash FROM users WHERE id = %s", (session['user_id'],)).fetchone()
         if not check_password_hash(user['pin_hash'], pin):
             return jsonify({'error': 'Incorrect UPI PIN'}), 401
             
         last_four = dc_no[-4:]
         start_balance = random.choice([15000.00, 32000.50, 8500.75, 45000.00, 112000.00, 5000.00])
-        conn.execute("INSERT INTO bank_accounts (user_id, bank_name, last_four, balance) VALUES (?, ?, ?, ?)", 
+        conn.execute("INSERT INTO bank_accounts (user_id, bank_name, last_four, balance) VALUES (%s, %s, %s, %s)", 
                      (session['user_id'], bank_name, last_four, start_balance))
         conn.commit()
         return jsonify({'success': True, 'message': f'{bank_name} linked successfully!'})
@@ -197,17 +217,17 @@ def poll():
     
     conn = get_db()
     try:
-        user = conn.execute("SELECT phone FROM users WHERE id = ?", (session['user_id'],)).fetchone()
+        user = conn.execute("SELECT phone FROM users WHERE id = %s", (session['user_id'],)).fetchone()
         if not user:
             return jsonify({'new_txs': [], 'pending_requests': []})
 
         new_txs = conn.execute(
-            "SELECT id, title, amount, type, category FROM transactions WHERE user_id = ? AND id > ? ORDER BY id ASC", 
+            "SELECT id, title, amount, type, category FROM transactions WHERE user_id = %s AND id > %s ORDER BY id ASC", 
             (session['user_id'], last_id)
         ).fetchall()
         
         pending_reqs = conn.execute(
-            "SELECT id, requester_name, amount, note, timestamp FROM payment_requests WHERE payer_phone = ? AND status = 'PENDING' ORDER BY id DESC", 
+            "SELECT id, requester_name, amount, note, timestamp FROM payment_requests WHERE payer_phone = %s AND status = 'PENDING' ORDER BY id DESC", 
             (user['phone'],)
         ).fetchall()
 
@@ -227,14 +247,14 @@ def check_balance():
     
     conn = get_db()
     try:
-        user = conn.execute("SELECT balance, pin_hash FROM users WHERE id = ?", (session['user_id'],)).fetchone()
+        user = conn.execute("SELECT balance, pin_hash FROM users WHERE id = %s", (session['user_id'],)).fetchone()
         if not check_password_hash(user['pin_hash'], pin):
             return jsonify({'error': 'Incorrect UPI PIN'}), 401
             
         if account_id == 'omni':
             bal = user['balance']
         else:
-            bank = conn.execute("SELECT balance FROM bank_accounts WHERE id = ? AND user_id = ?", (account_id, session['user_id'])).fetchone()
+            bank = conn.execute("SELECT balance FROM bank_accounts WHERE id = %s AND user_id = %s", (account_id, session['user_id'])).fetchone()
             if not bank: return jsonify({'error': 'Account not found'}), 404
             bal = bank['balance']
             
@@ -254,11 +274,11 @@ def change_pin():
         
     conn = get_db()
     try:
-        user = conn.execute("SELECT pin_hash FROM users WHERE id = ?", (session['user_id'],)).fetchone()
+        user = conn.execute("SELECT pin_hash FROM users WHERE id = %s", (session['user_id'],)).fetchone()
         if not check_password_hash(user['pin_hash'], old_pin):
             return jsonify({'error': 'Incorrect current UPI PIN'}), 401
             
-        conn.execute("UPDATE users SET pin_hash = ? WHERE id = ?", (generate_password_hash(new_pin), session['user_id']))
+        conn.execute("UPDATE users SET pin_hash = %s WHERE id = %s", (generate_password_hash(new_pin), session['user_id']))
         conn.commit()
         return jsonify({'success': 'UPI PIN updated successfully'})
     finally:
@@ -285,28 +305,27 @@ def add_money():
     
     conn = get_db()
     try:
-        conn.execute('BEGIN IMMEDIATE')
-        user = conn.execute("SELECT pin_hash FROM users WHERE id = ?", (session['user_id'],)).fetchone()
+        user = conn.execute("SELECT pin_hash FROM users WHERE id = %s", (session['user_id'],)).fetchone()
         
         if not check_password_hash(user['pin_hash'], pin): 
             return jsonify({'error': 'Incorrect UPI PIN'}), 401
             
         if dest_account == 'omni':
-            conn.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (amount, session['user_id']))
+            conn.execute("UPDATE users SET balance = balance + %s WHERE id = %s", (amount, session['user_id']))
             dest_name = "Omni Bank Account"
         else:
-            bank = conn.execute("SELECT id, bank_name, last_four FROM bank_accounts WHERE id = ? AND user_id = ?", (dest_account, session['user_id'])).fetchone()
+            bank = conn.execute("SELECT id, bank_name, last_four FROM bank_accounts WHERE id = %s AND user_id = %s", (dest_account, session['user_id'])).fetchone()
             if not bank: return jsonify({'error': 'Invalid destination account.'}), 400
-            conn.execute("UPDATE bank_accounts SET balance = balance + ? WHERE id = ?", (amount, dest_account))
+            conn.execute("UPDATE bank_accounts SET balance = balance + %s WHERE id = %s", (amount, dest_account))
             dest_name = f"{bank['bank_name']} - {bank['last_four']}"
             
         utr = f"DEP{random.randint(10000000, 99999999)}"
-        conn.execute("INSERT INTO transactions (user_id, utr, title, category, amount, type, source_account, timestamp) VALUES (?, ?, 'Cash Deposit', 'Topup', ?, 'CREDIT', ?, ?)", 
+        conn.execute("INSERT INTO transactions (user_id, utr, title, category, amount, type, source_account, timestamp) VALUES (%s, %s, 'Cash Deposit', 'Topup', %s, 'CREDIT', %s, %s)", 
                      (session['user_id'], utr, amount, dest_name, get_ist_time()))
         
         conn.commit()
         return jsonify({'success': True, 'message': f'Successfully deposited ₹{amount} to {dest_name}!'})
-    except sqlite3.OperationalError:
+    except psycopg2.errors.OperationalError:
         conn.rollback()
         return jsonify({'error': 'Server busy processing another transaction.'}), 500
     finally:
@@ -337,22 +356,21 @@ def transact():
     
     conn = get_db()
     try:
-        conn.execute('BEGIN IMMEDIATE')
-        user = conn.execute("SELECT name, phone, balance, pin_hash FROM users WHERE id = ?", (session['user_id'],)).fetchone()
+        user = conn.execute("SELECT name, phone, balance, pin_hash FROM users WHERE id = %s", (session['user_id'],)).fetchone()
         
         if not check_password_hash(user['pin_hash'], pin): 
             return jsonify({'error': 'Incorrect 4-Digit UPI PIN'}), 401
 
         if source_account == 'omni':
             payer_bal = user['balance']
-            update_query = "UPDATE users SET balance = balance - ? WHERE id = ?"
+            update_query = "UPDATE users SET balance = balance - %s WHERE id = %s"
             update_id = session['user_id']
             source_name = "Omni Bank Account"
         else:
-            bank = conn.execute("SELECT id, bank_name, last_four, balance FROM bank_accounts WHERE id = ? AND user_id = ?", (source_account, session['user_id'])).fetchone()
+            bank = conn.execute("SELECT id, bank_name, last_four, balance FROM bank_accounts WHERE id = %s AND user_id = %s", (source_account, session['user_id'])).fetchone()
             if not bank: return jsonify({'error': 'Invalid source account selected'}), 400
             payer_bal = bank['balance']
-            update_query = "UPDATE bank_accounts SET balance = balance - ? WHERE id = ?"
+            update_query = "UPDATE bank_accounts SET balance = balance - %s WHERE id = %s"
             update_id = bank['id']
             source_name = f"{bank['bank_name']} - {bank['last_four']}"
             
@@ -363,7 +381,7 @@ def transact():
         recipient = None
         
         if is_p2p:
-            recipient = conn.execute("SELECT id, name, balance FROM users WHERE phone = ? OR upi_id = ?", (target, target)).fetchone()
+            recipient = conn.execute("SELECT id, name, balance FROM users WHERE phone = %s OR upi_id = %s", (target, target)).fetchone()
             if not recipient and category in ['To Mobile Number', 'To Bank / UPI ID']:
                 return jsonify({'error': 'User not found! Please check the mobile number or UPI ID.'}), 404
         
@@ -373,26 +391,26 @@ def transact():
         
         conn.execute(update_query, (amount, update_id))
         if cashback_amount > 0:
-            conn.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (cashback_amount, session['user_id']))
+            conn.execute("UPDATE users SET balance = balance + %s WHERE id = %s", (cashback_amount, session['user_id']))
         
         display_target_name = recipient['name'] if recipient else target
-        conn.execute("INSERT INTO transactions (user_id, utr, title, category, amount, type, source_account, timestamp) VALUES (?, ?, ?, ?, ?, 'DEBIT', ?, ?)",
+        conn.execute("INSERT INTO transactions (user_id, utr, title, category, amount, type, source_account, timestamp) VALUES (%s, %s, %s, %s, %s, 'DEBIT', %s, %s)",
                      (session['user_id'], sender_utr, display_target_name, category, amount, source_name, get_ist_time()))
                      
         if cashback_amount > 0:
             cb_utr = f"CB{random.randint(10000000, 99999999)}"
-            conn.execute("INSERT INTO transactions (user_id, utr, title, category, amount, type, source_account, timestamp) VALUES (?, ?, 'Cashback Earned', 'Rewards', ?, 'CREDIT', ?, ?)",
+            conn.execute("INSERT INTO transactions (user_id, utr, title, category, amount, type, source_account, timestamp) VALUES (%s, %s, 'Cashback Earned', 'Rewards', %s, 'CREDIT', %s, %s)",
                          (session['user_id'], cb_utr, cashback_amount, source_name, get_ist_time()))
                          
         if recipient and is_p2p:
             rec_utr = f"4{random.randint(10000000000, 99999999999)}"
-            conn.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (amount, recipient['id']))
-            conn.execute("INSERT INTO transactions (user_id, utr, title, category, amount, type, source_account, timestamp) VALUES (?, ?, ?, 'Received', ?, 'CREDIT', 'Omni Bank Account', ?)",
+            conn.execute("UPDATE users SET balance = balance + %s WHERE id = %s", (amount, recipient['id']))
+            conn.execute("INSERT INTO transactions (user_id, utr, title, category, amount, type, source_account, timestamp) VALUES (%s, %s, %s, 'Received', %s, 'CREDIT', 'Omni Bank Account', %s)",
                          (recipient['id'], rec_utr, f"From: {user['name']}", amount, get_ist_time()))
                          
         conn.commit()
         return jsonify({'success': True, 'utr': sender_utr, 'amount': amount, 'recipient': display_target_name, 'cashback': cashback_amount, 'source_name': source_name})
-    except sqlite3.OperationalError:
+    except psycopg2.errors.OperationalError:
         conn.rollback()
         return jsonify({'error': 'Server busy processing another transaction. Please try again.'}), 500
     finally:
@@ -412,13 +430,13 @@ def request_money():
 
     conn = get_db()
     try:
-        user = conn.execute("SELECT name, phone FROM users WHERE id = ?", (session['user_id'],)).fetchone()
+        user = conn.execute("SELECT name, phone FROM users WHERE id = %s", (session['user_id'],)).fetchone()
         split_count = len(phones) + 1 if is_split else len(phones)
         amount_per_person = round(total_amount / split_count, 2) if is_split else total_amount
 
         for p in phones:
             if p == user['phone']: continue
-            conn.execute('INSERT INTO payment_requests (requester_id, requester_name, payer_phone, amount, note, timestamp) VALUES (?, ?, ?, ?, ?, ?)',
+            conn.execute('INSERT INTO payment_requests (requester_id, requester_name, payer_phone, amount, note, timestamp) VALUES (%s, %s, %s, %s, %s, %s)',
                          (session['user_id'], user['name'], p, amount_per_person, note, get_ist_time()))
         conn.commit()
         return jsonify({'success': True, 'amount_per_person': amount_per_person})
@@ -436,14 +454,14 @@ def respond_request():
 
     conn = get_db()
     try:
-        req = conn.execute("SELECT * FROM payment_requests WHERE id = ? AND status = 'PENDING'", (req_id,)).fetchone()
+        req = conn.execute("SELECT * FROM payment_requests WHERE id = %s AND status = 'PENDING'", (req_id,)).fetchone()
         if not req:
             return jsonify({'error': 'Request not found or settled'}), 404
 
-        payer = conn.execute("SELECT balance, pin_hash FROM users WHERE id = ?", (session['user_id'],)).fetchone()
+        payer = conn.execute("SELECT balance, pin_hash FROM users WHERE id = %s", (session['user_id'],)).fetchone()
 
         if action == 'DECLINE':
-            conn.execute("UPDATE payment_requests SET status = 'DECLINED' WHERE id = ?", (req_id,))
+            conn.execute("UPDATE payment_requests SET status = 'DECLINED' WHERE id = %s", (req_id,))
             conn.commit()
             return jsonify({'success': True, 'message': 'Request declined'})
 
@@ -452,14 +470,14 @@ def respond_request():
 
         if source_account == 'omni':
             payer_bal = payer['balance']
-            update_query = "UPDATE users SET balance = balance - ? WHERE id = ?"
+            update_query = "UPDATE users SET balance = balance - %s WHERE id = %s"
             update_id = session['user_id']
             source_name = "Omni Bank Account"
         else:
-            bank = conn.execute("SELECT id, bank_name, last_four, balance FROM bank_accounts WHERE id = ? AND user_id = ?", (source_account, session['user_id'])).fetchone()
+            bank = conn.execute("SELECT id, bank_name, last_four, balance FROM bank_accounts WHERE id = %s AND user_id = %s", (source_account, session['user_id'])).fetchone()
             if not bank: return jsonify({'error': 'Invalid source account selected'}), 400
             payer_bal = bank['balance']
-            update_query = "UPDATE bank_accounts SET balance = balance - ? WHERE id = ?"
+            update_query = "UPDATE bank_accounts SET balance = balance - %s WHERE id = %s"
             update_id = bank['id']
             source_name = f"{bank['bank_name']} - {bank['last_four']}"
 
@@ -468,15 +486,15 @@ def respond_request():
 
         utr_payer = f"4{random.randint(10000000000, 99999999999)}"
         conn.execute(update_query, (req['amount'], update_id))
-        conn.execute("INSERT INTO transactions (user_id, utr, title, category, amount, type, source_account, timestamp) VALUES (?, ?, ?, 'Request Paid', ?, 'DEBIT', ?, ?)", (session['user_id'], utr_payer, f"To: {req['requester_name']}", req['amount'], source_name, get_ist_time()))
+        conn.execute("INSERT INTO transactions (user_id, utr, title, category, amount, type, source_account, timestamp) VALUES (%s, %s, %s, 'Request Paid', %s, 'DEBIT', %s, %s)", (session['user_id'], utr_payer, f"To: {req['requester_name']}", req['amount'], source_name, get_ist_time()))
 
-        requester = conn.execute("SELECT balance FROM users WHERE id = ?", (req['requester_id'],)).fetchone()
+        requester = conn.execute("SELECT balance FROM users WHERE id = %s", (req['requester_id'],)).fetchone()
         if requester:
             utr_req = f"4{random.randint(10000000000, 99999999999)}"
-            conn.execute("UPDATE users SET balance = balance + ? WHERE id = ?", (req['amount'], req['requester_id']))
-            conn.execute("INSERT INTO transactions (user_id, utr, title, category, amount, type, source_account, timestamp) VALUES (?, ?, ?, 'Request Received', ?, 'CREDIT', 'Omni Bank Account', ?)", (req['requester_id'], utr_req, f"From: {req['payer_phone']}", req['amount'], get_ist_time()))
+            conn.execute("UPDATE users SET balance = balance + %s WHERE id = %s", (req['amount'], req['requester_id']))
+            conn.execute("INSERT INTO transactions (user_id, utr, title, category, amount, type, source_account, timestamp) VALUES (%s, %s, %s, 'Request Received', %s, 'CREDIT', 'Omni Bank Account', %s)", (req['requester_id'], utr_req, f"From: {req['payer_phone']}", req['amount'], get_ist_time()))
 
-        conn.execute("UPDATE payment_requests SET status = 'PAID' WHERE id = ?", (req_id,))
+        conn.execute("UPDATE payment_requests SET status = 'PAID' WHERE id = %s", (req_id,))
         conn.commit()
         return jsonify({'success': True, 'message': f"Paid ₹{req['amount']} to {req['requester_name']}"})
     finally:
@@ -487,7 +505,7 @@ def my_qr():
     if 'user_id' not in session: return jsonify({'error': 'Unauthorized'}), 401
     conn = get_db()
     try:
-        user = conn.execute("SELECT name, upi_id FROM users WHERE id = ?", (session['user_id'],)).fetchone()
+        user = conn.execute("SELECT name, upi_id FROM users WHERE id = %s", (session['user_id'],)).fetchone()
         if not user: return jsonify({'error': 'User not found'}), 404
         
         upi_uri = f"upi://pay?pa={user['upi_id']}&pn={user['name']}&cu=INR"
@@ -510,7 +528,7 @@ def download_statement():
     
     conn = get_db()
     try:
-        txs = conn.execute("SELECT utr, title, category, amount, type, source_account, timestamp FROM transactions WHERE user_id = ? ORDER BY id DESC", (session['user_id'],)).fetchall()
+        txs = conn.execute("SELECT utr, title, category, amount, type, source_account, timestamp FROM transactions WHERE user_id = %s ORDER BY id DESC", (session['user_id'],)).fetchall()
         
         filtered_txs = []
         for t in txs:
