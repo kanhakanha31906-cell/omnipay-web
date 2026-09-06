@@ -1,0 +1,1173 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>OmniPay - UPI & Wallet</title>
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <style>
+        :root { --purple: #4a148c; --purple-dark: #311b92; --green: #00a66c; --bg: #f4f5f8; --text-main: #1f1f1f; --text-sub: #757575; }
+        * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+        
+        html, body { 
+            background: #eceff1; 
+            margin: 0; 
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+        }
+        
+        .mobile-frame { 
+            width: 100%; 
+            height: 100%; 
+            max-width: none; 
+            background: var(--bg); 
+            display: flex; 
+            flex-direction: column; 
+            position: relative; 
+            overflow: hidden; 
+        }
+
+        @media (min-width: 600px) {
+            .mobile-frame { 
+                max-width: 440px; 
+                height: 90vh; 
+                margin: 5vh auto; 
+                border-radius: 30px; 
+                border: 8px solid #1f1f1f; 
+                box-shadow: 0 10px 40px rgba(0,0,0,0.2); 
+            }
+        }
+
+        .screen { display: none; height: 100%; width: 100%; flex-direction: column; }
+        .screen.active { display: flex; }
+        .auth-container { padding: 30px; background: white; flex: 1; display: flex; flex-direction: column; justify-content: center; text-align: center; }
+        .auth-container h1 { color: var(--purple); font-size: 32px; margin-bottom: 5px; font-weight: 800; }
+        .auth-container p { color: var(--text-sub); margin-bottom: 25px; font-size: 14px; }
+        .auth-container input { width: 100%; padding: 14px; margin-bottom: 15px; border: 1px solid #ddd; border-radius: 8px; font-size: 15px; }
+        .auth-btn { width: 100%; padding: 15px; background: var(--purple); color: white; font-weight: bold; font-size: 16px; border: none; border-radius: 8px; cursor: pointer; }
+        .auth-link { text-align: center; color: var(--purple); margin-top: 20px; font-size: 14px; cursor: pointer; font-weight: 500; }
+        
+        .app-header { background: var(--purple); color: white; padding: 16px; display: flex; align-items: center; justify-content: space-between; }
+        .user-avatar { background: #e1d3f5; color: var(--purple); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-weight: bold; }
+        .icon-btn { border: none; color: white; cursor: pointer; border-radius: 20px; }
+        
+        .scroll-content { flex: 1; overflow-y: auto; padding: 12px 12px 70px 12px; scroll-behavior: smooth; }
+        
+        .balance-card { background: linear-gradient(135deg, var(--purple), var(--purple-dark)); color: white; border-radius: 14px; padding: 18px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 4px 10px rgba(0,0,0,0.1); }
+        .balance-card h4 { font-size: 13px; font-weight: normal; opacity: 0.9; margin-bottom: 4px; }
+        .balance-card p { font-size: 12px; opacity: 0.8; }
+        
+        .apps-row { display: flex; gap: 10px; margin-bottom: 12px; }
+        .app-btn { flex: 1; background: white; padding: 12px; border-radius: 14px; text-align: center; font-weight: bold; font-size: 13px; color: var(--text-main); cursor: pointer; box-shadow: 0 2px 6px rgba(0,0,0,0.03); display: flex; align-items: center; justify-content: center; gap: 6px; }
+        
+        .card-box { background: white; border-radius: 14px; padding: 16px; margin-bottom: 12px; box-shadow: 0 2px 6px rgba(0,0,0,0.03); }
+        .section-title { font-size: 13px; font-weight: 700; color: var(--text-main); margin-bottom: 14px; }
+        .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px 6px; text-align: center; }
+        .grid-item { cursor: pointer; display: flex; flex-direction: column; align-items: center; }
+        .icon-wrap { width: 48px; height: 48px; border-radius: 16px; background: #f4ecfc; color: var(--purple); font-size: 22px; display: flex; align-items: center; justify-content: center; margin-bottom: 6px; }
+        .grid-item span { font-size: 11px; color: #333; font-weight: 500; }
+        
+        .tx-card { display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #f0f0f0; }
+        .tx-card:last-child { border-bottom: none; }
+        .tx-left h5 { font-size: 14px; color: var(--text-main); }
+        .tx-left p { font-size: 11px; color: var(--text-sub); margin-top: 2px; }
+        .tx-amount { font-weight: bold; font-size: 14px; }
+        
+        input, select { width: 100%; padding: 14px; margin: 8px 0; border: 1px solid #ddd; border-radius: 8px; font-size: 15px; }
+        .primary-btn { width: 100%; padding: 14px; background: var(--purple); color: white; font-size: 16px; font-weight: bold; border: none; border-radius: 8px; cursor: pointer; margin-top: 10px; }
+        
+        .modal { display: none; position: absolute; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; justify-content: center; align-items: flex-end; }
+        .bottom-sheet { background: white; width: 100%; border-top-left-radius: 20px; border-top-right-radius: 20px; padding: 20px; max-height: 90%; overflow-y: auto; }
+        .success-overlay { display: none; position: absolute; inset: 0; background: var(--green); z-index: 200; color: white; flex-direction: column; justify-content: center; align-items: center; text-align: center; padding: 30px; }
+        .tick-circle { width: 80px; height: 80px; background: white; color: var(--green); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 40px; margin-bottom: 20px; }
+
+        .bottom-nav { position: absolute; bottom: 0; width: 100%; background: white; border-top: 1px solid #e0e0e0; display: flex; justify-content: space-around; padding: 10px 0; z-index: 50; }
+        .nav-item { text-align: center; font-size: 20px; color: var(--text-sub); cursor: pointer; flex: 1; }
+        .nav-item span { display: block; font-size: 11px; margin-top: 3px; }
+        .nav-item.active { color: var(--purple); font-weight: bold; }
+
+        .op-btn { flex: 1; padding: 10px 0; background: white; border: 1px solid #ccc; border-radius: 8px; font-weight: bold; cursor: pointer; color: #444; }
+        .op-btn:hover { background: #f4ecfc; border-color: var(--purple); color: var(--purple); }
+
+        .toast-container {
+            position: absolute;
+            top: -100px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--green);
+            color: white;
+            padding: 12px 20px;
+            border-radius: 30px;
+            box-shadow: 0 5px 15px rgba(0,0,0,0.3);
+            z-index: 1000;
+            transition: top 0.4s ease-in-out;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            width: 90%;
+            font-weight: bold;
+        }
+        .toast-container.show { top: 20px; }
+        .settings-row { display: flex; justify-content: space-between; padding: 12px 0; border-bottom: 1px solid #eee; font-size: 14px; }
+        .settings-row:last-child { border-bottom: none; }
+        
+        .banner-scroll { display: flex; overflow-x: auto; gap: 12px; margin-bottom: 16px; padding-bottom: 5px; scroll-snap-type: x mandatory; -webkit-overflow-scrolling: touch; scroll-behavior: smooth; }
+        .banner-scroll::-webkit-scrollbar { display: none; }
+        .banner { min-width: 92%; padding: 24px 20px; border-radius: 14px; scroll-snap-align: center; box-shadow: 0 6px 12px rgba(0,0,0,0.08); min-height: 140px; display: flex; flex-direction: column; justify-content: center; }
+        .banner h3 { font-size: 22px; margin-bottom: 8px; font-weight: 800; letter-spacing: -0.5px; }
+        .banner p { font-size: 14px; font-weight: 500; opacity: 0.9; line-height: 1.4; }
+    </style>
+</head>
+<body>
+
+<div class="mobile-frame">
+    <div id="toast" class="toast-container">
+        <span style="font-size: 20px;">🔊</span>
+        <div id="toastMessage">You received money!</div>
+    </div>
+
+    <!-- Login Screen -->
+    <div id="loginScreen" class="screen active">
+        <div class="auth-container">
+            <h1>OmniPay</h1>
+            <p>Fast. Secure. Universal.</p>
+            <input type="tel" id="loginPhone" placeholder="10-Digit Mobile Number" maxlength="10" oninput="this.value = this.value.replace(/[^0-9]/g, '')">
+            <input type="password" id="loginPin" placeholder="4-Digit UPI PIN" maxlength="4">
+            <button class="auth-btn" onclick="login()">Login Securely</button>
+            <div class="auth-link" onclick="switchScreen('registerScreen')">New User? Create an Account</div>
+        </div>
+    </div>
+
+    <!-- Registration Screen -->
+    <div id="registerScreen" class="screen">
+        <div class="auth-container">
+            <h1>Join OmniPay</h1>
+            <p>Setup your digital wallet and UPI ID.</p>
+            <input type="text" id="regName" placeholder="Full Name">
+            <input type="tel" id="regPhone" placeholder="10-Digit Mobile Number" maxlength="10" oninput="this.value = this.value.replace(/[^0-9]/g, '')">
+            <input type="password" id="regPin" placeholder="Set 4-Digit UPI PIN" maxlength="4">
+            <button class="auth-btn" onclick="register()">Register Now</button>
+            <div class="auth-link" onclick="switchScreen('loginScreen')">Already have an account? Login</div>
+        </div>
+    </div>
+
+    <div id="dashboardScreen" class="screen">
+        <!-- Re-engineered Header -->
+        <div class="app-header">
+            <div style="display: flex; align-items: center; gap: 12px; flex: 1; min-width: 0;">
+                <div class="user-avatar" id="avatarLetter" style="flex-shrink: 0; width: 38px; height: 38px; font-size: 16px;">A</div>
+                <div style="display: flex; flex-direction: column; min-width: 0; padding-right: 10px;">
+                    <span id="headerUserName" style="font-size: 15px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; line-height: 1.2;">User</span>
+                    <span id="headerUpi" style="font-size: 11px; opacity: 0.85; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; margin-top: 2px;">Loading...</span>
+                </div>
+            </div>
+            <div style="display: flex; align-items: center; gap: 10px; flex-shrink: 0;">
+                <button class="icon-btn" style="background: rgba(255,255,255,0.15); font-size: 14px; padding: 6px;" onclick="loadData(false)" title="Refresh Data">🔄</button>
+                <div style="position: relative; cursor: pointer; padding: 4px;" onclick="scrollToPendingRequests()">
+                    <span style="font-size: 20px;">🔔</span>
+                    <span id="notifBadge" style="display: none; position: absolute; top: -2px; right: -4px; background: #ff1744; color: white; font-size: 10px; font-weight: bold; border-radius: 50%; width: 16px; height: 16px; text-align: center; line-height: 16px; border: 2px solid var(--purple);">0</span>
+                </div>
+                <button class="icon-btn" style="background: rgba(255,255,255,0.15); font-size: 16px; padding: 6px;" onclick="openSettings()" title="Settings">⚙️</button>
+            </div>
+        </div>
+
+        <div class="scroll-content">
+            <div id="tabHome" style="display: block;">
+                <!-- Banners -->
+                <div class="banner-scroll" id="autoSwipeBanners">
+                    <div class="banner" style="background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 100%); color: #b71c1c;">
+                        <h3>🏦 Omni Bank Account</h3>
+                        <p>Zero Balance. 7% Interest. Open in 2 mins!</p>
+                    </div>
+                    <div class="banner" style="background: linear-gradient(135deg, #cb2d3e 0%, #ef473a 100%); color: #fff;">
+                        <h3>🍔 Zomato: 50% OFF</h3>
+                        <p>Craving food? Get flat 50% off on your first order. Use code: OMNI50</p>
+                    </div>
+                    <div class="banner" style="background: linear-gradient(135deg, #11998e 0%, #38ef7d 100%); color: #004d40;">
+                        <h3>📦 Amazon Prime Free</h3>
+                        <p>Link your OmniPay account to get 3 months of Prime totally free.</p>
+                    </div>
+                    <div class="banner" style="background: linear-gradient(135deg, #0f2027 0%, #203a43 50%, #2c5364 100%); color: #fff;">
+                        <h3>✈️ MakeMyTrip Travels</h3>
+                        <p>Book domestic flights and get instant flat ₹1000 OFF!</p>
+                    </div>
+                    <div class="banner" style="background: linear-gradient(135deg, #fc4a1a 0%, #f7b733 100%); color: #fff;">
+                        <h3>👗 Myntra Fashion Sale</h3>
+                        <p>Earn an extra 10% Myntra Cash when checking out with OmniPay.</p>
+                    </div>
+                </div>
+
+                <div class="apps-row">
+                    <div class="app-btn" onclick="showCashbackHistory()"><span style="font-size:18px;">🎁</span> Rewards</div>
+                    <div class="app-btn" onclick="document.getElementById('offersModal').style.display='flex'"><span style="font-size:18px;">🎉</span> Offers</div>
+                </div>
+
+                <div id="pendingReqContainer" class="card-box" style="display: none; background: #fff8e1; border: 1px solid #ffe082;">
+                    <div class="section-title" style="color: #b78103;">Pending Payment Requests</div>
+                    <div id="pendingReqList"></div>
+                </div>
+
+                <div class="card-box">
+                    <div class="section-title">Transfer & Manage</div>
+                    <div class="grid-4">
+                        <div class="grid-item" onclick="openDirectPay('To Mobile Number', 'Enter Phone Number')"><div class="icon-wrap">📱</div><span>To Mobile</span></div>
+                        <div class="grid-item" onclick="openDirectPay('To Bank / UPI ID', 'Enter VPA')"><div class="icon-wrap">🏦</div><span>To UPI ID</span></div>
+                        <div class="grid-item" onclick="openBalanceCheck()"><div class="icon-wrap">💳</div><span>Check Bal</span></div>
+                        <div class="grid-item" onclick="openMyQr()"><div class="icon-wrap">⬇️</div><span>Receive</span></div>
+                    </div>
+                </div>
+
+                <!-- Upgraded 8-Grid Bill Pay Section -->
+                <div class="card-box">
+                    <div class="section-title">Recharge & Pay Bills</div>
+                    <div class="grid-4">
+                        <div class="grid-item" onclick="document.getElementById('rechargeModal').style.display='flex'"><div class="icon-wrap">📶</div><span>Recharge</span></div>
+                        <div class="grid-item" onclick="setupBillFetch('Electricity')"><div class="icon-wrap">⚡</div><span>Electricity</span></div>
+                        <div class="grid-item" onclick="setupBillFetch('Gas Cylinder')"><div class="icon-wrap">🔥</div><span>Book Gas</span></div>
+                        <div class="grid-item" onclick="setupBillFetch('FASTag Recharge')"><div class="icon-wrap">🚘</div><span>FASTag</span></div>
+                        
+                        <div class="grid-item" style="margin-top:10px;" onclick="setupBillFetch('Broadband')"><div class="icon-wrap">🌐</div><span>Broadband</span></div>
+                        <div class="grid-item" style="margin-top:10px;" onclick="setupBillFetch('DTH')"><div class="icon-wrap">📺</div><span>DTH</span></div>
+                        <div class="grid-item" style="margin-top:10px;" onclick="setupBillFetch('Credit Card')"><div class="icon-wrap">💳</div><span>Credit Card</span></div>
+                        <div class="grid-item" style="margin-top:10px;" onclick="openSplitModal()"><div class="icon-wrap">👥</div><span>Split Bill</span></div>
+                    </div>
+                </div>
+                
+                <div class="card-box">
+                    <div class="section-title" style="display: flex; justify-content: space-between;">
+                        Linked Bank Accounts
+                        <button style="background: var(--purple); color: white; border: none; padding: 4px 10px; border-radius: 12px; font-size: 12px; cursor: pointer;" onclick="document.getElementById('addBankModal').style.display='flex'">+ Link Bank</button>
+                    </div>
+                    <div id="accountsListUI"></div>
+                </div>
+
+                <div class="card-box">
+                    <div class="section-title" style="display: flex; justify-content: space-between;">
+                        Recent Transactions <span style="color: var(--purple); cursor: pointer;" onclick="switchTab('tabHistory')">View All</span>
+                    </div>
+                    <div id="txListShort"></div>
+                </div>
+            </div>
+
+            <div id="tabHistory" style="display: none;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:15px;">
+                    <h3 style="color: var(--purple);">All Transactions</h3>
+                    <button class="icon-btn" style="background:var(--purple); color:white; font-size:12px; padding:6px 12px;" onclick="document.getElementById('downloadModal').style.display='flex'">📥 Statement</button>
+                </div>
+                <input type="text" id="searchTx" placeholder="Search by name, bank, or category..." onkeyup="filterHistory()" style="margin-bottom: 12px; padding: 10px; border-radius: 8px; border: 1px solid #ddd; width: 100%;">
+                <div class="card-box" id="txListFull" style="padding: 10px;"></div>
+            </div>
+        </div>
+
+        <div class="bottom-nav">
+            <div class="nav-item active" id="navHome" onclick="switchTab('tabHome')">🏠<span>Home</span></div>
+            <div class="nav-item" onclick="startScanner()">📷<span>Scan QR</span></div>
+            <div class="nav-item" onclick="openMyQr()">⬇️<span>Receive</span></div>
+            <div class="nav-item" id="navHistory" onclick="switchTab('tabHistory')">📜<span>History</span></div>
+        </div>
+    </div>
+
+    <!-- MODALS -->
+    <div class="modal" id="addBankModal">
+        <div class="bottom-sheet">
+            <h3 style="color: var(--purple); margin-bottom: 12px;">Link New Bank Account</h3>
+            <select id="newBankName">
+                <option value="State Bank of India">State Bank of India</option>
+                <option value="HDFC Bank">HDFC Bank</option>
+                <option value="ICICI Bank">ICICI Bank</option>
+                <option value="Axis Bank">Axis Bank</option>
+                <option value="Punjab National Bank">Punjab National Bank</option>
+                <option value="Bank of Baroda">Bank of Baroda</option>
+                <option value="Kotak Mahindra Bank">Kotak Mahindra Bank</option>
+                <option value="Union Bank of India">Union Bank of India</option>
+                <option value="Canara Bank">Canara Bank</option>
+                <option value="Bank of India">Bank of India</option>
+            </select>
+            <input type="text" id="newBankDC" placeholder="16-Digit Debit Card No." maxlength="16" oninput="this.value = this.value.replace(/[^0-9]/g, '')">
+            <input type="password" id="newBankPin" placeholder="Enter 4-Digit UPI PIN" maxlength="4">
+            <button class="primary-btn" onclick="submitAddBank()">Securely Link Account</button>
+            <button class="primary-btn" style="background:#eee; color:#333;" onclick="closeModal('addBankModal')">Cancel</button>
+        </div>
+    </div>
+
+    <div class="modal" id="settingsModal">
+        <div class="bottom-sheet">
+            <h3 style="color: var(--purple); margin-bottom: 15px;">Settings & Profile</h3>
+            
+            <div style="background:#f9f9f9; padding:15px; border-radius:10px; margin-bottom:15px;">
+                <div class="settings-row">
+                    <span style="color:#666;">Name</span>
+                    <strong id="setUserName">User</strong>
+                </div>
+                <div class="settings-row">
+                    <span style="color:#666;">Mobile</span>
+                    <strong id="setUserPhone">+91-xxxxxx</strong>
+                </div>
+                <div class="settings-row">
+                    <span style="color:#666;">UPI ID</span>
+                    <strong id="setUserUpi">xxxx@upi</strong>
+                </div>
+            </div>
+
+            <button class="primary-btn" style="background:#f4ecfc; color:var(--purple); border: 1px solid var(--purple); margin-bottom:15px;" onclick="openAddMoney()">💰 Deposit Money</button>
+
+            <h4 style="font-size:14px; margin-bottom:8px; color:#444;">Change UPI PIN</h4>
+            <input type="password" id="setOldPin" placeholder="Current 4-Digit PIN" maxlength="4">
+            <input type="password" id="setNewPin" placeholder="New 4-Digit PIN" maxlength="4">
+            <button class="primary-btn" style="background:var(--green); margin-bottom:15px;" onclick="changePin()">Update PIN</button>
+
+            <button class="primary-btn" style="background:#e53935;" onclick="logout()">Log Out</button>
+            <button class="primary-btn" style="background:#eee; color:#333;" onclick="closeModal('settingsModal')">Close</button>
+        </div>
+    </div>
+
+    <div class="modal" id="downloadModal">
+        <div class="bottom-sheet">
+            <h3 style="color: var(--purple); margin-bottom: 12px;">Download Statement</h3>
+            <label style="font-size:12px; color:#666;">Start Date (Optional)</label>
+            <input type="date" id="stmtStart">
+            <label style="font-size:12px; color:#666;">End Date (Optional)</label>
+            <input type="date" id="stmtEnd">
+            <button class="primary-btn" onclick="downloadStatement()">Download CSV</button>
+            <button class="primary-btn" style="background:#eee; color:#333;" onclick="closeModal('downloadModal')">Cancel</button>
+        </div>
+    </div>
+
+    <div class="modal" id="splitModal">
+        <div class="bottom-sheet">
+            <h3 style="color: var(--purple); margin-bottom: 12px;">Split Bill / Request</h3>
+            <input type="number" id="splitTotalAmount" placeholder="Total Amount (₹)">
+            <input type="text" id="splitPhones" placeholder="Enter Mobile Numbers (comma separated)">
+            <input type="text" id="splitNote" placeholder="Note (e.g. Dinner, Uber)">
+            <label style="display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 8px 0; color: #444;">
+                <input type="checkbox" id="isSplitCheckbox" checked style="width: auto; margin: 0;"> Split equally including myself
+            </label>
+            <button class="primary-btn" onclick="submitSplitRequest()">Send Requests</button>
+            <button class="primary-btn" style="background:#eee; color:#333;" onclick="closeModal('splitModal')">Cancel</button>
+        </div>
+    </div>
+
+    <div class="modal" id="balanceCheckModal">
+        <div class="bottom-sheet">
+            <h3 style="color: var(--purple);">Check Account Balance</h3>
+            <label style="font-size: 12px; font-weight: bold; color: #666; margin-bottom: 4px; display: block;">Select Account:</label>
+            <select id="balanceAccountSelect" style="margin-bottom: 15px; font-weight: bold; padding: 12px; border-radius: 8px; width: 100%; border: 1px solid #ddd;"></select>
+            
+            <input type="password" id="balancePinInput" placeholder="Enter 4-Digit UPI PIN" maxlength="4">
+            <button class="primary-btn" onclick="fetchBalance()">Check Securely</button>
+            
+            <div id="balanceResultText" style="display:none; text-align:center; font-size:28px; font-weight:bold; color:var(--purple); margin-top:20px; padding:10px; background:#f4ecfc; border-radius:12px;"></div>
+            
+            <button class="primary-btn" style="background:#eee; color:#333; margin-top:15px;" onclick="closeModal('balanceCheckModal')">Close</button>
+        </div>
+    </div>
+
+    <div class="modal" id="offersModal">
+        <div class="bottom-sheet" style="max-height: 80vh; overflow-y: auto;">
+            <h3 style="color: var(--purple); margin-bottom: 15px;">🎉 Exclusive OmniPay Offers</h3>
+            <div style="background: #e8f8f2; padding: 12px; border-radius: 8px; margin-bottom: 10px; border-left: 4px solid var(--green);">
+                <strong>⚡ Electricity Bill</strong><br><span style="font-size: 13px; color: #444;">Get up to 5% cashback on your first electricity bill this month.</span>
+            </div>
+            <div style="background: #f4ecfc; padding: 12px; border-radius: 8px; margin-bottom: 10px; border-left: 4px solid var(--purple);">
+                <strong>📱 Mobile Recharge</strong><br><span style="font-size: 13px; color: #444;">Guaranteed cashback on Jio and Airtel plans above ₹299.</span>
+            </div>
+            <div style="background: #fff3e0; padding: 12px; border-radius: 8px; margin-bottom: 10px; border-left: 4px solid #ffb300;">
+                <strong>🍔 Zomato Dining</strong><br><span style="font-size: 13px; color: #444;">Flat 50% Off (up to ₹150) on ordering through Zomato via OmniPay.</span>
+            </div>
+            <div style="background: #e3f2fd; padding: 12px; border-radius: 8px; margin-bottom: 10px; border-left: 4px solid #2196f3;">
+                <strong>✈️ MakeMyTrip Flights</strong><br><span style="font-size: 13px; color: #444;">Instant ₹1000 Discount on domestic flight bookings.</span>
+            </div>
+            <div style="background: #fce4ec; padding: 12px; border-radius: 8px; margin-bottom: 10px; border-left: 4px solid #e91e63;">
+                <strong>👗 Myntra Shopping</strong><br><span style="font-size: 13px; color: #444;">10% additional Myntra Cash on apparel purchases over ₹1499.</span>
+            </div>
+            <div style="background: #e0f7fa; padding: 12px; border-radius: 8px; margin-bottom: 10px; border-left: 4px solid #00acc1;">
+                <strong>💳 Credit Card Repayment</strong><br><span style="font-size: 13px; color: #444;">Pay your Credit Card bill and earn flat ₹100 in rewards.</span>
+            </div>
+            <button class="primary-btn" onclick="closeModal('offersModal')">Close</button>
+        </div>
+    </div>
+
+    <div class="modal" id="cashbackModal">
+        <div class="bottom-sheet">
+            <h3 style="color: var(--green); margin-bottom: 15px;">OmniPay Rewards</h3>
+            <div style="background: #e8f8f2; padding: 15px; border-radius: 12px; margin-bottom:15px; text-align:center;">
+                <p style="font-size:13px; color:#444;">Total Lifetime Earnings</p>
+                <h2 style="color: var(--green);">₹<span id="totalCashbackDisplay">0.00</span></h2>
+            </div>
+            <div id="cbHistoryList" style="max-height: 250px; overflow-y: auto;"></div>
+            <button class="primary-btn" onclick="closeModal('cashbackModal')">Close</button>
+        </div>
+    </div>
+
+    <div class="modal" id="rechargeModal">
+        <div class="bottom-sheet" style="max-height: 80vh; overflow-y: auto;">
+            <h3 style="color: var(--purple); margin-bottom: 10px;">Mobile Recharge</h3>
+            <input type="text" id="rechargePhone" placeholder="Enter 10-Digit Mobile Number" maxlength="10">
+            <div style="display:flex; gap: 8px; margin-top: 10px;">
+                <button class="op-btn" onclick="fetchPlans('Jio')">Jio</button>
+                <button class="op-btn" onclick="fetchPlans('Airtel')">Airtel</button>
+                <button class="op-btn" onclick="fetchPlans('Vi')">Vi</button>
+                <button class="op-btn" onclick="fetchPlans('BSNL')">BSNL</button>
+            </div>
+            <div id="planList" style="margin-top: 15px;"></div>
+            <button class="primary-btn" style="background:#eee; color:#333; margin-top:15px;" onclick="closeModal('rechargeModal')">Cancel</button>
+        </div>
+    </div>
+
+    <div class="modal" id="fetchModal">
+        <div class="bottom-sheet">
+            <h3 id="fetchModalTitle" style="color: var(--purple);">Fetch Bill</h3>
+            <select id="billOperator"></select>
+            <input type="text" id="fetchConsumerId" placeholder="Enter Consumer/Account ID">
+            <button class="primary-btn" onclick="fetchLiveBill()">Fetch Bill Details</button>
+            <button class="primary-btn" style="background:#eee; color:#333;" onclick="closeModal('fetchModal')">Cancel</button>
+        </div>
+    </div>
+
+    <div class="modal" id="addMoneyModal">
+        <div class="bottom-sheet">
+            <h3 style="color: var(--purple);">Deposit Funds</h3>
+            <label style="font-size: 11px; font-weight: bold; color: #666; margin-bottom: 4px; display: block;">Deposit To Account:</label>
+            <select id="addDestAccount" style="margin-bottom: 15px; font-weight: bold; padding: 12px; border-radius: 8px; width: 100%; border: 1px solid #ddd;"></select>
+            
+            <input type="number" id="addAmount" placeholder="Enter Amount to Deposit (₹)">
+            <input type="password" id="addMoneyPin" placeholder="Enter 4-Digit UPI PIN" maxlength="4">
+            <button class="primary-btn" onclick="addMoneySubmit()">Securely Deposit Cash</button>
+            <button class="primary-btn" style="background:#eee; color:#333;" onclick="closeModal('addMoneyModal')">Cancel</button>
+        </div>
+    </div>
+
+    <div class="modal" id="payModal">
+        <div class="bottom-sheet">
+            <h3 id="payModalTitle" style="color: var(--purple);">Payment</h3>
+            <label style="font-size: 11px; font-weight: bold; color: #666; margin-bottom: 4px; display: block;">Paying From:</label>
+            <select id="paySourceAccount" style="margin-bottom: 15px; font-weight: bold; padding: 12px; border-radius: 8px; width: 100%; border: 1px solid #ddd;"></select>
+            
+            <div id="billFetchedDetails" style="display:none; background:#e8f8f2; padding: 12px; border-radius: 8px; margin: 10px 0; font-size: 13px;"></div>
+            <input type="text" id="payTarget" placeholder="Recipient / Account">
+            <input type="number" id="payAmount" placeholder="Amount (₹)">
+            <input type="password" id="payPin" placeholder="Enter 4-Digit UPI PIN" maxlength="4">
+            <button class="primary-btn" onclick="executePayment()">Pay Securely</button>
+            <button class="primary-btn" style="background:#eee; color:#333;" onclick="closeModal('payModal')">Cancel</button>
+        </div>
+    </div>
+
+    <div class="modal" id="scannerModal">
+        <div class="bottom-sheet" style="padding: 20px;">
+            <h3>Scan Any UPI QR Code</h3>
+            <div id="reader" style="width: 100%; min-height: 250px; background: #000; border-radius: 12px; overflow: hidden; margin-top: 15px;"></div>
+            <button class="primary-btn" style="background: #999;" onclick="stopScanner()">Cancel</button>
+        </div>
+    </div>
+
+    <div class="modal" id="myQrModal">
+        <div class="bottom-sheet" style="text-align: center;">
+            <h3>OmniPay QR Code</h3>
+            <img id="qrDisplay" src="" style="width: 220px; height: 220px; margin: 15px auto; display: block;" alt="QR">
+            <p id="qrUpiString" style="font-weight: bold; font-size: 14px;"></p>
+            <button class="primary-btn" onclick="closeModal('myQrModal')">Done</button>
+        </div>
+    </div>
+
+    <div class="success-overlay" id="successScreen">
+        <div class="tick-circle">✓</div>
+        <h2>Success</h2>
+        <h1 id="succAmount" style="font-size: 36px; margin: 10px 0;">₹0.00</h1>
+        <p id="succTarget" style="font-size: 16px; opacity: 0.9; margin-bottom: 5px;">Paid</p>
+        <p id="succSource" style="font-size: 12px; opacity: 0.8; margin-bottom: 20px;">From: Omni Bank</p>
+        
+        <div id="cashbackBanner" style="display:none; background: white; color: var(--green); padding: 12px 20px; border-radius: 20px; font-weight: bold; margin-bottom: 20px;">
+            🎉 You earned ₹<span id="succCashback">0.00</span> Cashback!
+        </div>
+        
+        <div style="background: rgba(255,255,255,0.15); width: 100%; padding: 15px; border-radius: 12px; font-size: 13px; text-align: left; margin-bottom: 25px;">
+            <p><strong>UTR:</strong> <span id="succUtr"></span></p>
+        </div>
+        <button class="primary-btn" style="background: white; color: var(--green);" onclick="dismissSuccess()">Done</button>
+    </div>
+</div>
+
+<script>
+    let html5QrCode = null;
+    let activeCategory = 'Payment';
+    let allTransactions = [];
+    let lifetimeCashback = 0;
+    
+    let lastTxId = 0;
+    let pollInterval = null;
+    let bannerInterval = null;
+    let knownPendingIds = new Set();
+    
+    let globalUserName = '';
+    let globalUserPhone = '';
+    let globalUserUpi = '';
+    let globalBanks = [];
+
+    const billProviders = {
+        'Electricity': ['Tata Power', 'Adani Electricity', 'BSES Rajdhani', 'Torrent Power'],
+        'Gas Cylinder': ['HP Gas', 'Indane Gas', 'Bharat Gas'],
+        'FASTag Recharge': ['HDFC Bank FASTag', 'ICICI Bank FASTag', 'Paytm FASTag'],
+        'Broadband': ['Jio Fiber', 'Airtel Xstream', 'BSNL Broadband', 'Excitel'],
+        'Water Bill': ['Delhi Jal Board', 'BWSSB Bangalore', 'BMC Mumbai'],
+        'DTH': ['Tata Play', 'Airtel Digital TV', 'Dish TV', 'Sun Direct'],
+        'Credit Card': ['HDFC Bank Credit Card', 'SBI Card', 'ICICI Bank Credit Card', 'Axis Bank Credit Card'],
+        'Loan Repayment': ['Bajaj Finance', 'Muthoot Finance', 'Home Credit', 'Mahindra Finance']
+    };
+
+    function switchScreen(screenId) {
+        document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+        document.getElementById(screenId).classList.add('active');
+        if(screenId === 'dashboardScreen') startBannerAutoSwipe();
+    }
+
+    function switchTab(tabId) {
+        document.getElementById('tabHome').style.display = 'none';
+        document.getElementById('tabHistory').style.display = 'none';
+        document.getElementById('navHome').classList.remove('active');
+        document.getElementById('navHistory').classList.remove('active');
+        document.getElementById(tabId).style.display = 'block';
+        if(tabId === 'tabHome') document.getElementById('navHome').classList.add('active');
+        if(tabId === 'tabHistory') document.getElementById('navHistory').classList.add('active');
+    }
+
+    function scrollToPendingRequests() {
+        switchTab('tabHome');
+        const el = document.getElementById('pendingReqContainer');
+        if (el) el.scrollIntoView({ behavior: 'smooth' });
+    }
+
+    function startBannerAutoSwipe() {
+        if(bannerInterval) clearInterval(bannerInterval);
+        const scroller = document.getElementById('autoSwipeBanners');
+        if(!scroller) return;
+        
+        bannerInterval = setInterval(() => {
+            const scrollLeft = scroller.scrollLeft;
+            const clientWidth = scroller.clientWidth;
+            const scrollWidth = scroller.scrollWidth;
+            
+            if (scrollLeft + clientWidth >= scrollWidth - 10) {
+                scroller.scrollTo({ left: 0, behavior: 'smooth' });
+            } else {
+                scroller.scrollBy({ left: clientWidth, behavior: 'smooth' });
+            }
+        }, 4000);
+    }
+
+    function speakPayment(amount) {
+        if ('speechSynthesis' in window) {
+            const utterance = new SpeechSynthesisUtterance(`Rupees ${amount} credited to your account.`);
+            utterance.rate = 1.0;
+            utterance.pitch = 1.1;
+            window.speechSynthesis.speak(utterance);
+        }
+    }
+
+    function showToast(message) {
+        const toast = document.getElementById('toast');
+        document.getElementById('toastMessage').innerText = message;
+        toast.classList.add('show');
+        setTimeout(() => {
+            toast.classList.remove('show');
+        }, 4000);
+    }
+
+    function startPolling() {
+        if (pollInterval) clearInterval(pollInterval);
+        pollInterval = setInterval(async () => {
+            if(lastTxId === 0) return;
+            try {
+                const res = await fetch('/api/poll?last_id=' + lastTxId);
+                const data = await res.json();
+                
+                if (data.new_txs && data.new_txs.length > 0) {
+                    let hasNewCredit = false;
+                    data.new_txs.forEach(tx => {
+                        if (tx.type === 'CREDIT' && (tx.category === 'Received' || tx.category === 'Request Received' || tx.category === 'Rewards')) {
+                            showToast(`₹${tx.amount} received ${tx.title}`);
+                            speakPayment(tx.amount);
+                            hasNewCredit = true;
+                        }
+                        if (tx.id > lastTxId) lastTxId = tx.id;
+                    });
+                    if (hasNewCredit) loadData(true);
+                }
+
+                if (data.pending_requests) {
+                    const count = data.pending_requests.length;
+                    const badge = document.getElementById('notifBadge');
+                    
+                    if (count > 0) {
+                        badge.innerText = count;
+                        badge.style.display = 'block';
+                    } else {
+                        badge.style.display = 'none';
+                    }
+
+                    data.pending_requests.forEach(r => {
+                        if (!knownPendingIds.has(r.id)) {
+                            knownPendingIds.add(r.id);
+                            showToast(`🔔 Payment request: ₹${r.amount} from ${r.requester_name}`);
+                            if ('speechSynthesis' in window) {
+                                const speech = new SpeechSynthesisUtterance(`New payment request of ${r.amount} rupees from ${r.requester_name}`);
+                                window.speechSynthesis.speak(speech);
+                            }
+                        }
+                    });
+                    renderPendingRequests(data.pending_requests);
+                }
+            } catch (e) {}
+        }, 3000);
+    }
+
+    function buildBankOptions() {
+        let options = `<option value="omni">Omni Bank Account</option>`;
+        globalBanks.forEach(b => {
+            options += `<option value="${b.id}">${b.bank_name} •••• ${b.last_four}</option>`;
+        });
+        return options;
+    }
+    
+    function populateSourceAccounts() {
+        const paySource = document.getElementById('paySourceAccount');
+        const balSource = document.getElementById('balanceAccountSelect');
+        const addDest = document.getElementById('addDestAccount');
+        
+        let omniOpt = `<option value="omni">Omni Bank Account</option>`;
+        let options = '';
+        globalBanks.forEach(b => {
+            options += `<option value="${b.id}">${b.bank_name} •••• ${b.last_four}</option>`;
+        });
+
+        if (paySource) paySource.innerHTML = omniOpt + options;
+        if (balSource) balSource.innerHTML = omniOpt + options;
+        if (addDest) addDest.innerHTML = omniOpt + options;
+    }
+
+    function renderPendingRequests(requests) {
+        const container = document.getElementById('pendingReqContainer');
+        const list = document.getElementById('pendingReqList');
+        if (requests && requests.length > 0) {
+            container.style.display = 'block';
+            list.innerHTML = requests.map(r => `
+                <div style="padding: 10px 0; border-bottom: 1px dashed #ffd54f;">
+                    <div style="display:flex; justify-content:space-between; align-items:flex-start;">
+                        <div>
+                            <strong style="font-size:13px;">${r.requester_name}</strong>
+                            <div style="font-size:11px; color:#666;">Requested: ₹${r.amount.toFixed(2)} (${r.note})</div>
+                            <div style="font-size:10px; color:#999;">${r.timestamp}</div>
+                        </div>
+                        <div style="display:flex; gap: 6px;">
+                            <button style="background: #e0e0e0; color:#333; border:none; padding: 6px 8px; border-radius: 6px; font-size:12px; cursor:pointer;" onclick="declineRequestedBill(${r.id})">✕ Decline</button>
+                        </div>
+                    </div>
+                    <div style="display: flex; gap: 8px; margin-top: 8px; align-items: center;">
+                        <select id="splitSource_${r.id}" style="flex:1; padding:6px; font-size:11px; border-radius:6px; border:1px solid #ddd;">
+                            ${buildBankOptions()}
+                        </select>
+                        <button style="background: var(--purple); color:white; border:none; padding: 6px 12px; border-radius: 6px; font-size:12px; font-weight:bold; cursor:pointer;" onclick="payRequestedBill(${r.id}, ${r.amount}, '${r.requester_name}')">Pay</button>
+                    </div>
+                </div>
+            `).join('');
+        } else {
+            container.style.display = 'none';
+        }
+    }
+
+    async function register() {
+        const payload = { name: document.getElementById('regName').value.trim(), phone: document.getElementById('regPhone').value.trim(), pin: document.getElementById('regPin').value.trim() };
+        if(!payload.name || !payload.phone || !payload.pin) return alert("Fill all fields");
+        if(payload.phone.length !== 10) return alert("Please enter exactly a 10-digit mobile number.");
+        const res = await fetch('/api/register', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+        const data = await res.json();
+        if(data.success) { alert(data.success); switchScreen('loginScreen'); } else alert(data.error);
+    }
+
+    async function login() {
+        const payload = { phone: document.getElementById('loginPhone').value.trim(), pin: document.getElementById('loginPin').value.trim() };
+        if(payload.phone.length !== 10) return alert("Please enter exactly a 10-digit mobile number.");
+        const res = await fetch('/api/login', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+        const data = await res.json();
+        if(data.success) {
+            loadData(false);
+            if ('speechSynthesis' in window) window.speechSynthesis.speak(new SpeechSynthesisUtterance("")); 
+        } else alert(data.error);
+    }
+
+    async function logout() {
+        if(pollInterval) clearInterval(pollInterval);
+        if(bannerInterval) clearInterval(bannerInterval);
+        await fetch('/api/logout', { method: 'POST' });
+        closeModal('settingsModal');
+        switchScreen('loginScreen');
+    }
+
+    function openSettings() {
+        document.getElementById('setUserName').innerText = globalUserName;
+        document.getElementById('setUserPhone').innerText = globalUserPhone;
+        document.getElementById('setUserUpi').innerText = globalUserUpi;
+        document.getElementById('setOldPin').value = '';
+        document.getElementById('setNewPin').value = '';
+        document.getElementById('settingsModal').style.display = 'flex';
+    }
+
+    function openAddMoney() {
+        document.getElementById('addAmount').value = '';
+        document.getElementById('addMoneyPin').value = '';
+        populateSourceAccounts();
+        document.getElementById('settingsModal').style.display = 'none';
+        document.getElementById('addMoneyModal').style.display = 'flex';
+    }
+
+    async function changePin() {
+        const old_pin = document.getElementById('setOldPin').value;
+        const new_pin = document.getElementById('setNewPin').value;
+        if (!old_pin || !new_pin) return alert("Please fill both PIN fields.");
+        
+        const res = await fetch('/api/change_pin', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ old_pin, new_pin })
+        });
+        const data = await res.json();
+        if(data.success) {
+            alert("PIN Updated successfully!");
+            closeModal('settingsModal');
+        } else {
+            alert(data.error);
+        }
+    }
+    
+    async function submitAddBank() {
+        const bank_name = document.getElementById('newBankName').value;
+        const dc_no = document.getElementById('newBankDC').value;
+        const pin = document.getElementById('newBankPin').value;
+        if(dc_no.length !== 16) return alert("Enter exactly 16 digits for Debit Card");
+        
+        const res = await fetch('/api/add_bank', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({ bank_name, dc_no, pin })
+        });
+        const data = await res.json();
+        if(data.success) {
+            alert(data.message);
+            closeModal('addBankModal');
+            document.getElementById('newBankDC').value = '';
+            document.getElementById('newBankPin').value = '';
+            loadData(true);
+        } else {
+            alert(data.error);
+        }
+    }
+
+    function downloadStatement() {
+        const start = document.getElementById('stmtStart').value;
+        const end = document.getElementById('stmtEnd').value;
+        let url = '/api/download_statement?';
+        if (start) url += `start=${start}&`;
+        if (end) url += `end=${end}`;
+        window.open(url, '_blank');
+        closeModal('downloadModal');
+    }
+
+    function filterHistory() {
+        const query = document.getElementById('searchTx').value.toLowerCase();
+        const filtered = allTransactions.filter(t => 
+            t.title.toLowerCase().includes(query) || 
+            t.category.toLowerCase().includes(query) ||
+            (t.source_account && t.source_account.toLowerCase().includes(query))
+        );
+        
+        const listFull = document.getElementById('txListFull');
+        if (filtered.length === 0) {
+            listFull.innerHTML = '<p style="font-size:12px; color:#888; text-align:center;">No matching transactions</p>';
+        } else {
+            listFull.innerHTML = filtered.map(t => {
+                const isCredit = t.type === 'CREDIT';
+                const color = isCredit ? 'var(--green)' : '#e53935';
+                const sourceText = t.source_account || 'Omni Bank Account';
+                return `<div class="tx-card">
+                            <div class="tx-left">
+                                <h5 style="color: ${isCredit ? 'var(--green)' : 'var(--text-main)'}">${t.title}</h5>
+                                <p>${t.timestamp} • ${t.category}<br><span style="color:var(--purple);font-weight:600;font-size:10px;">${sourceText}</span></p>
+                            </div>
+                            <div class="tx-amount" style="color: ${color}">${isCredit ? '+' : '-'}₹${Number(t.amount).toFixed(2)}</div>
+                        </div>`;
+            }).join('');
+        }
+    }
+
+    function renderAccounts() {
+        let html = '';
+        globalBanks.forEach(b => {
+            html += `
+            <div style="border: 1px solid #eee; padding: 12px; border-radius: 8px; margin-bottom: 8px; display:flex; justify-content:space-between; align-items:center;">
+                <div>
+                    <strong style="font-size:14px; color: var(--purple);">${b.bank_name}</strong>
+                    <br><span style="font-size:12px; color:#666;">•••• ${b.last_four}</span>
+                </div>
+                <div style="font-size: 20px;">🏦</div>
+            </div>`;
+        });
+        
+        if (globalBanks.length === 0) {
+            html = '<p style="font-size:12px; color:#888; text-align:center;">No banks linked yet.</p>';
+        }
+        
+        document.getElementById('accountsListUI').innerHTML = html;
+    }
+
+    async function loadData(isSilentRefresh = false) {
+        try {
+            const res = await fetch('/api/user_data');
+            if (res.status === 401) { switchScreen('loginScreen'); return; }
+            const data = await res.json();
+            
+            if (!data || !data.user) return;
+
+            allTransactions = data.transactions || [];
+            globalBanks = data.banks || [];
+            lifetimeCashback = data.total_cashback || 0;
+            
+            if(allTransactions.length > 0) {
+                lastTxId = Math.max(...allTransactions.map(t => t.id));
+            }
+            
+            if(!isSilentRefresh) {
+                switchScreen('dashboardScreen');
+                startPolling(); 
+            }
+            
+            globalUserName = data.user.name || 'User';
+            globalUserPhone = data.user.phone || '';
+            globalUserUpi = data.user.upi_id || `${globalUserPhone}@upi`;
+            
+            document.getElementById('headerUserName').innerText = globalUserName;
+            document.getElementById('avatarLetter').innerText = globalUserName.charAt(0).toUpperCase();
+            document.getElementById('headerUpi').innerText = globalUserUpi;
+            document.getElementById('totalCashbackDisplay').innerText = Number(lifetimeCashback).toLocaleString('en-IN', {minimumFractionDigits: 2});
+            
+            renderAccounts();
+            populateSourceAccounts();
+            
+            const txListShort = document.getElementById('txListShort');
+            const txListFull = document.getElementById('txListFull');
+            
+            if (allTransactions.length === 0) {
+                if (txListShort) txListShort.innerHTML = '<p style="font-size:12px; color:#888;">No transactions</p>';
+                if (txListFull) txListFull.innerHTML = '<p style="font-size:12px; color:#888; text-align:center;">No history available</p>';
+            } else {
+                const generateTxHTML = (t) => {
+                    const isCredit = t.type === 'CREDIT';
+                    const color = isCredit ? 'var(--green)' : '#e53935';
+                    const sign = isCredit ? '+' : '-';
+                    const sourceText = t.source_account || 'Omni Bank Account';
+                    return `
+                        <div class="tx-card">
+                            <div class="tx-left">
+                                <h5 style="color: ${isCredit ? 'var(--green)' : 'var(--text-main)'}">${t.title}</h5>
+                                <p>${t.timestamp} • ${t.category}<br><span style="color:var(--purple);font-weight:600;font-size:10px;">${sourceText}</span></p>
+                            </div>
+                            <div class="tx-amount" style="color: ${color}">${sign}₹${Number(t.amount).toFixed(2)}</div>
+                        </div>`;
+                };
+                if (txListFull) txListFull.innerHTML = allTransactions.map(generateTxHTML).join('');
+                if (txListShort) txListShort.innerHTML = allTransactions.slice(0, 3).map(generateTxHTML).join('');
+            }
+            checkPendingRequests();
+        } catch (error) {
+            console.error("UI Update Failed:", error);
+        }
+    }
+
+    function openSplitModal() {
+        document.getElementById('splitTotalAmount').value = '';
+        document.getElementById('splitPhones').value = '';
+        document.getElementById('splitNote').value = '';
+        document.getElementById('splitModal').style.display = 'flex';
+    }
+
+    async function submitSplitRequest() {
+        const total_amount = document.getElementById('splitTotalAmount').value;
+        const phones = document.getElementById('splitPhones').value;
+        const note = document.getElementById('splitNote').value;
+        const is_split = document.getElementById('isSplitCheckbox').checked;
+        if (!total_amount || !phones) return alert("Fill in amount and at least one mobile number.");
+        const res = await fetch('/api/request_money', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ total_amount, phones, note, is_split }) });
+        const data = await res.json();
+        if (data.success) { closeModal('splitModal'); alert(`Payment request sent! (₹${data.amount_per_person} per person)`); } else alert(data.error);
+    }
+
+    async function checkPendingRequests() {
+        const res = await fetch('/api/pending_requests');
+        if (res.status !== 200) return;
+        const data = await res.json();
+        renderPendingRequests(data.requests);
+        
+        const count = data.requests ? data.requests.length : 0;
+        const badge = document.getElementById('notifBadge');
+        if (count > 0) {
+            badge.innerText = count;
+            badge.style.display = 'block';
+        } else {
+            badge.style.display = 'none';
+        }
+        
+        if (data.requests) {
+            data.requests.forEach(r => knownPendingIds.add(r.id));
+        }
+    }
+
+    async function payRequestedBill(requestId, amount, requesterName) {
+        const source_account = document.getElementById('splitSource_' + requestId).value;
+        const pin = prompt(`Enter 4-Digit UPI PIN to pay ₹${amount} to ${requesterName}:`);
+        if (!pin) return;
+        
+        const res = await fetch('/api/respond_request', { 
+            method: 'POST', 
+            headers: {'Content-Type': 'application/json'}, 
+            body: JSON.stringify({ request_id: requestId, action: 'PAY', pin: pin, source_account: source_account }) 
+        });
+        const data = await res.json();
+        
+        if (data.success) { 
+            knownPendingIds.delete(requestId);
+            
+            const selectEl = document.getElementById('splitSource_' + requestId);
+            const sourceName = selectEl.options[selectEl.selectedIndex].text;
+            
+            document.getElementById('succAmount').innerText = '₹' + amount.toFixed(2);
+            document.getElementById('succTarget').innerText = `Paid to ${requesterName}`;
+            document.getElementById('succSource').innerText = `From: ${sourceName}`;
+            document.getElementById('succUtr').innerText = 'Request Settled Successfully';
+            document.getElementById('cashbackBanner').style.display = 'none';
+            document.getElementById('successScreen').style.display = 'flex';
+            if ('speechSynthesis' in window) window.speechSynthesis.speak(new SpeechSynthesisUtterance(`Payment of ${amount} rupees successful.`));
+            loadData(true); 
+        } else alert(data.error);
+    }
+
+    async function declineRequestedBill(requestId) {
+        if (!confirm("Decline this payment request?")) return;
+        const res = await fetch('/api/respond_request', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ request_id: requestId, action: 'DECLINE' }) });
+        const data = await res.json();
+        if (data.success) {
+            knownPendingIds.delete(requestId);
+            checkPendingRequests();
+        }
+    }
+
+    function openBalanceCheck() {
+        populateSourceAccounts();
+        document.getElementById('balancePinInput').value = '';
+        document.getElementById('balanceResultText').style.display = 'none';
+        document.getElementById('balanceCheckModal').style.display = 'flex';
+    }
+
+    async function fetchBalance() {
+        const pin = document.getElementById('balancePinInput').value;
+        const account_id = document.getElementById('balanceAccountSelect').value;
+        if(!pin) return alert("Enter PIN");
+        
+        const res = await fetch('/api/check_balance', { 
+            method: 'POST', 
+            headers: {'Content-Type': 'application/json'}, 
+            body: JSON.stringify({ pin, account_id }) 
+        });
+        const data = await res.json();
+        
+        if(data.success) {
+            document.getElementById('balanceResultText').innerText = '₹ ' + data.balance.toLocaleString('en-IN', {minimumFractionDigits: 2});
+            document.getElementById('balanceResultText').style.display = 'block';
+            document.getElementById('balancePinInput').value = '';
+            setTimeout(() => { 
+                document.getElementById('balanceResultText').style.display = 'none'; 
+                closeModal('balanceCheckModal');
+            }, 4000);
+        } else {
+            alert(data.error);
+        }
+    }
+
+    function showCashbackHistory() {
+        const cbList = document.getElementById('cbHistoryList');
+        const rewards = allTransactions.filter(t => t.category === 'Rewards');
+        if(rewards.length === 0) {
+            cbList.innerHTML = '<p style="font-size:13px; color:#666; text-align:center;">No cashback earned yet. Make payments to earn rewards!</p>';
+        } else {
+            let html = '';
+            rewards.forEach(r => {
+                html += `
+                <div style="display:flex; justify-content:space-between; padding:10px 0; border-bottom:1px solid #eee;">
+                    <div>
+                        <strong style="color: var(--green); font-size:14px;">${r.title}</strong>
+                        <div style="font-size:11px; color:#888; margin-top:3px;">${r.timestamp}</div>
+                    </div>
+                    <strong style="color: var(--green);">+₹${r.amount.toFixed(2)}</strong>
+                </div>`;
+            });
+            cbList.innerHTML = html;
+        }
+        document.getElementById('cashbackModal').style.display = 'flex';
+    }
+
+    function setupBillFetch(category) {
+        document.getElementById('fetchModalTitle').innerText = category;
+        const opSelect = document.getElementById('billOperator');
+        opSelect.innerHTML = '';
+        billProviders[category].forEach(op => { opSelect.add(new Option(op, op)); });
+        document.getElementById('fetchModal').style.display = 'flex';
+    }
+
+    async function fetchLiveBill() {
+        const id = document.getElementById('fetchConsumerId').value;
+        if (!id) return alert("Enter Consumer ID");
+        const res = await fetch('/api/fetch_bill', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({ consumer_id: id, operator: document.getElementById('billOperator').value }) });
+        const bill = await res.json();
+        closeModal('fetchModal');
+        openDirectPay(bill.operator, 'Consumer ID', `${bill.consumer_name} (${id})`, bill.bill_amount);
+        document.getElementById('billFetchedDetails').style.display = 'block';
+        document.getElementById('billFetchedDetails').innerHTML = `<strong>${bill.consumer_name}</strong><br>Due Date: ${bill.due_date} <span style="color:var(--green);">(Verified)</span>`;
+    }
+
+    async function fetchPlans(operator) {
+        const phone = document.getElementById('rechargePhone').value;
+        if(phone.length < 10) return alert("Please enter a valid 10-digit mobile number first.");
+        const res = await fetch('/api/telecom_plans');
+        const data = await res.json();
+        const plans = data[operator];
+        let html = `<h4 style="color: var(--purple); margin-bottom:10px;">${operator} Popular Plans</h4>`;
+        plans.forEach(p => {
+            html += `
+            <div style="border:1px solid #ddd; padding:12px; border-radius:8px; margin-bottom:8px; cursor:pointer; background: #fafafa;" onclick="selectPlan('${operator}', '${phone}', ${p.price})">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <span style="font-size:20px; font-weight:bold; color:var(--purple);">₹${p.price}</span>
+                    <span style="font-weight:bold;">${p.data}</span>
+                </div>
+                <div style="font-size:12px; color:#666; margin-top:6px;">Validity: ${p.validity}</div>
+            </div>`;
+        });
+        document.getElementById('planList').innerHTML = html;
+    }
+
+    function selectPlan(operator, phone, price) {
+        closeModal('rechargeModal');
+        openDirectPay(`${operator} Recharge`, 'Mobile Number', phone, price);
+    }
+
+    function openDirectPay(title, placeholder, prefillTarget = '', prefillAmount = '') {
+        activeCategory = title;
+        populateSourceAccounts();
+        document.getElementById('payModalTitle').innerText = title;
+        document.getElementById('payTarget').placeholder = placeholder;
+        document.getElementById('payTarget').value = prefillTarget; 
+        document.getElementById('payAmount').value = prefillAmount; 
+        document.getElementById('payPin').value = '';
+        document.getElementById('billFetchedDetails').style.display = 'none';
+        if (prefillAmount !== '') { document.getElementById('payAmount').readOnly = true; document.getElementById('payAmount').style.background = '#f0f0f0'; } 
+        else { document.getElementById('payAmount').readOnly = false; document.getElementById('payAmount').style.background = 'white'; }
+        document.getElementById('payModal').style.display = 'flex';
+    }
+
+    async function executePayment() {
+        const payload = { 
+            title: document.getElementById('payTarget').value, 
+            category: activeCategory, 
+            amount: document.getElementById('payAmount').value, 
+            pin: document.getElementById('payPin').value,
+            source_account: document.getElementById('paySourceAccount').value
+        };
+        
+        if (!payload.title || !payload.amount || !payload.pin) return alert("Fill all fields");
+        const res = await fetch('/api/transact', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(payload) });
+        const data = await res.json();
+        
+        if (data.success) {
+            closeModal('payModal');
+            document.getElementById('succAmount').innerText = '₹' + data.amount.toFixed(2);
+            document.getElementById('succTarget').innerText = `Paid to ${data.recipient}`;
+            document.getElementById('succSource').innerText = `From: ${data.source_name}`;
+            document.getElementById('succUtr').innerText = data.utr;
+            if (data.cashback > 0) { document.getElementById('succCashback').innerText = data.cashback.toFixed(2); document.getElementById('cashbackBanner').style.display = 'block'; } 
+            else { document.getElementById('cashbackBanner').style.display = 'none'; }
+            document.getElementById('successScreen').style.display = 'flex';
+            if ('speechSynthesis' in window) window.speechSynthesis.speak(new SpeechSynthesisUtterance(`Payment of ${data.amount} rupees successful.`));
+            loadData(false);
+        } else alert(data.error);
+    }
+
+    function startScanner() {
+        document.getElementById('scannerModal').style.display = 'flex';
+        html5QrCode = new Html5Qrcode("reader");
+        html5QrCode.start({ facingMode: "environment" }, { fps: 10, qrbox: { width: 220, height: 220 } },
+            (decodedText) => {
+                stopScanner();
+                let recipient = decodedText; let amount = '';
+                if (decodedText.startsWith("upi://pay")) {
+                    const urlParams = new URLSearchParams(decodedText.replace("upi://pay?", ""));
+                    recipient = urlParams.get('pa') || decodedText; amount = urlParams.get('am') || '';
+                }
+                openDirectPay('Scan & Pay', 'Recipient VPA', recipient, amount);
+            },
+            (errorMessage) => {}
+        ).catch(err => { 
+            stopScanner();
+            let manualVPA = prompt("Camera unavailable. Enter UPI ID manually:");
+            if (manualVPA) openDirectPay('Scan & Pay', 'Recipient VPA', manualVPA, '');
+        });
+    }
+
+    function stopScanner() {
+        if (html5QrCode) { html5QrCode.stop().then(() => { html5QrCode.clear(); document.getElementById('scannerModal').style.display = 'none'; }).catch(()=>{}); }
+        else document.getElementById('scannerModal').style.display = 'none';
+    }
+
+    async function addMoneySubmit() {
+        const amount = document.getElementById('addAmount').value;
+        const pin = document.getElementById('addMoneyPin').value;
+        const dest_account = document.getElementById('addDestAccount').value;
+        
+        if(!amount || amount <= 0) return alert('Enter a valid amount');
+        if(!pin) return alert('Enter your UPI PIN');
+        
+        const res = await fetch('/api/add_money', { 
+            method: 'POST', 
+            headers: {'Content-Type': 'application/json'}, 
+            body: JSON.stringify({ amount, pin, dest_account }) 
+        });
+        const data = await res.json();
+        
+        if(data.success) { 
+            closeModal('addMoneyModal'); 
+            document.getElementById('addAmount').value = ''; 
+            document.getElementById('addMoneyPin').value = '';
+            loadData(true); 
+            alert(data.message); 
+        } else {
+            alert(data.error);
+        }
+    }
+
+    async function openMyQr() {
+        try {
+            const res = await fetch('/api/my_qr');
+            const data = await res.json();
+            if (data.error) return alert(data.error);
+            document.getElementById('qrDisplay').src = data.qr_image;
+            document.getElementById('qrUpiString').innerText = data.upi_id;
+            document.getElementById('myQrModal').style.display = 'flex';
+        } catch (e) {
+            console.error("QR Fetch Error:", e);
+            alert("Failed to load QR code. Please check your connection.");
+        }
+    }
+
+    function closeModal(id) { document.getElementById(id).style.display = 'none'; }
+    function dismissSuccess() { document.getElementById('successScreen').style.display = 'none'; }
+
+</script>
+</body>
+</html>
