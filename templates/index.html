@@ -16,6 +16,11 @@
             width: 100vw;
             height: 100dvh;
             overflow: hidden;
+            /* App-like behaviors below */
+    user-select: none; /* Prevents text highlighting */
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent; /* Removes blue flash on tap */
+    overscroll-behavior-y: none; /* Prevents browser pull-to-refresh bounce */
         }
         
         .mobile-frame { 
